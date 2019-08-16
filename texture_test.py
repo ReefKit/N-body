@@ -43,7 +43,7 @@ def display_scene():
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     glPushMatrix()
     # Textured thing
-    tex = read_texture('planet_test.jpg')
+    tex = read_texture('textures\planet_test.jpg')
     qobj = gluNewQuadric()
     gluQuadricTexture(qobj, GL_TRUE)
     glBindTexture(GL_TEXTURE_2D, tex)
