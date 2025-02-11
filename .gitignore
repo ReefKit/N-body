@@ -1,0 +1,10 @@
+.idea/
+.ipynb_checkpoints/
+*.pyc
+*.pyo
+__pycache__/
+notes/
+venv/
+*.log
+*.tmp
+

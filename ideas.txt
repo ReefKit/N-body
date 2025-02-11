@@ -1,6 +1,0 @@
-BIG
-3d hologram by glass sphere
-
-SMALL
-Display numbers for how screen is viewed
-Variable DELTA_T

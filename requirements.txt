@@ -1,0 +1,6 @@
+numpy
+Pillow
+PyOpenGL
+PyOpenGL_accelerate
+astropy
+configparser

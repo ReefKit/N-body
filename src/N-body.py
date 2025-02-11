@@ -2,56 +2,39 @@
 N-body Simulation
 
 Usage:
-    python N-body.py                  # Runs the solar system simulation
-    python N-body.py random [N]       # Runs a random simulation with N bodies (default: 10)
+    python N-body.py                     # Runs the solar system simulation
+    python N-body.py random [N]          # Runs a random simulation with N bodies (default: 10)
+    python N-body.py random-star [N]     # Runs a random simulation with N bodies and a central star (default: 10)
 
 Description:
     This program simulates an N-body system using OpenGL for visualization.
-    It supports two modes:
+    It supports three modes:
     - Solar system mode (default) using predefined celestial data from 'Solar_system.csv'.
-    - Random mode using a randomly generated set of celestial bodies.
+    - Random mode generating N bodies with no specific structure.
+    - Random-star mode generating N bodies with a central star.
 
 Configuration:
     - 'config/configure.ini' is used for the solar system mode.
-    - 'config/configure_random.ini' is used for the random mode.
-    - 'config/textures.txt' is used for the names of the textures of the bodies for the solar system mode.
+    - 'config/configure_random.ini' is used for both the random and random-star modes.
+
 Output:
     - A CSV file containing the simulation data is generated for analysis.
 """
 
-import ctypes
-import os
-
 import sys
-import platform
-
-if platform.system() == "Darwin":  # Check if running on macOS
-    from ctypes import util
-    orig_util_find_library = util.find_library
-    def new_util_find_library(name):
-        if name == 'OpenGL':
-            return '/System/Library/Frameworks/OpenGL.framework/OpenGL'
-        return orig_util_find_library(name)
-    util.find_library = new_util_find_library  # Apply the patch
-
-# Now safely import OpenGL
-try:
-    from OpenGL.GL import *
-    from OpenGL.GLUT import *
-    from OpenGL.GLU import *
-except ImportError:
-    print("Error: PyOpenGL is not installed. Install it using 'pip install PyOpenGL PyOpenGL_accelerate'.")
-    sys.exit(1)
-
+import os
 from random import random, uniform
 import math
 from time import time
+from OpenGL.GL import *
+from OpenGL.GLUT import *
+from OpenGL.GLU import *
 import configparser
 from astropy.time import Time as astrotime
 import datetime
 import threading
 from PIL import Image as Image
-import numpy as np
+import numpy
 
 # Load configuration settings based on mode selection
 SOLAR_SYSTEM_FILE = "data/Solar_system.csv"
@@ -74,6 +57,7 @@ else:
 # Screen and world settings
 WIDTH = int(config['CONFIGURE']['WIDTH'])
 HEIGHT = int(config['CONFIGURE']['HEIGHT'])
+POINT_SIZE = int(config['CONFIGURE']['POINT_SIZE'])
 POSITION_X = int(config['CONFIGURE']['POSITION_X'])
 POSITION_Y = int(config['CONFIGURE']['POSITION_Y'])
 VIEW_ANGLE = float(config['CONFIGURE']['VIEW_ANGLE'])
@@ -125,7 +109,9 @@ class Body(object):
         self.Vz = Vz if Vz is not None else random()
         self.mass = mass if mass is not None else uniform(1e22, 1e30)
         self.radius = radius if radius is not None else 1.0
-        self.color = (color1, color2, color3) if None not in (color1, color2, color3) else (1.0, 1.0, 1.0)
+        self.color1 = color1 if color1 is not None else random()
+        self.color2 = color2 if color2 is not None else random()
+        self.color3 = color3 if color3 is not None else random()
         self.texture = texture if texture is not None else 0
         self.coord = []
         self.zeroF()
@@ -141,9 +127,19 @@ class Body(object):
     def print(self):
         """Prints details of the body for debugging purposes."""
         
-        print(f"ident = {self.ident}, time = {self.time}, x = {self.x}, y = {self.y}, z = {self.z}, "
-              f"Vx = {self.Vx}, Vy = {self.Vy}, Vz = {self.Vz}, mass = {self.mass}, "
-              f"radius = {self.radius}, color = {self.color}, texture = {self.texture}")
+        print("ident = " + str(self.ident)
+              + ", time =  " + str(self.time) + " = " + str(astrotime(self.time, format = "jd", scale = 'utc').isot)
+              + ", x = " + str(self.x)
+              + ", y = " + str(self.y)
+              + ", z = " + str(self.z)
+              + ", Vx = " + str(self.Vx)
+              + ", Vy = " + str(self.Vy)
+              + ", Vz = " + str(self.Vz)
+              + ", mass = " + str(self.mass)
+              + ", radius = " + str(self.radius)
+              + ", color1 = " + str(self.color1)
+              + ", color2 = " + str(self.color2)
+              + ", color3 = " + str(self.color3))
 
     def cal_netforce(self, other_body):
         """Computes the net gravitational force acting on this body due to all others."""
@@ -218,6 +214,7 @@ class Asystem:
         """Initializes a planetary system from a file or generates a random one."""
         
         self.DELTA_T = NORM_DELTA_T
+        self.collisions = ""
         if type(input) == int:
             self.n_bodies = input
             self.system = []
@@ -237,33 +234,29 @@ class Asystem:
         for body in self.system:
             body.print()
 
-    def read_from_file(self, file_name):
-        """Reads planetary body data from a CSV file and initializes objects."""
+    def read_from_file(self,file_name):
+        """Loads a system configuration from a CSV file."""
+        
         bodies = []
-        try:
-            with open(f"data/{file_name}", 'r') as file:
-                for line in file:
-                    fields = line.split(",")
-                    if fields[0] != 'ident':
-                        body = Body(str(fields[0]),
-                                    float(fields[1]),
-                                    float(fields[2]),
-                                    float(fields[3]),
-                                    float(fields[4]),
-                                    float(fields[5]),
-                                    float(fields[6]),
-                                    float(fields[7]),
-                                    float(fields[8]),
-                                    float(fields[9]),
-                                    float(fields[10]),
-                                    float(fields[11]),
-                                    float(fields[12]),
-                                    int(fields[13]))
-                        bodies.append(body)
-        except FileNotFoundError:
-            print(f"Error: File 'data/{file_name}' not found.")
+        for line in open(file_name):
+            fields = line.split(",")
+            if fields[0] != 'ident':
+                body = Body(str(fields[0]),
+                            float(fields[1]),
+                            float(fields[2]),
+                            float(fields[3]),
+                            float(fields[4]),
+                            float(fields[5]),
+                            float(fields[6]),
+                            float(fields[7]),
+                            float(fields[8]),
+                            float(fields[9]),
+                            float(fields[10]),
+                            float(fields[11]),
+                            float(fields[12]),
+                            int(fields[13]))
+                bodies.append(body)
         return bodies
-
 
     def write_to_file(self,file):
         """Saves the current system state to a file."""
@@ -305,11 +298,13 @@ class Asystem:
 
     def compute2(self,body):
         """Updates the position of the body based on its velocity and increments the simulation time."""
+        
         body.cal_position()
         body.time += self.DELTA_T / SEC_PER_DAY
 
     def if_collision(self):
         """Detects collisions between bodies, logs them, and adjusts the time step to be more fine."""
+        
         self.collisions = ""
         if_T = False
         for i in range(len(self.system)):
@@ -336,60 +331,37 @@ class Asystem:
         else:
             self.DELTA_T = init.NORM_DELTA_T
 
-def create_textures(self):
-    """Loads and applies texture images for rendering."""
+    def create_textures(self):
+        """Loads and applies texture images for rendering."""
+        
+        filename = []
+        file = open(f"config/{TEXTURE_FILE}", 'r')
 
-    filename = []
-    texture_file_path = f"config/{TEXTURE_FILE}"
-
-    # Try to open the texture file list
-    try:
-        with open(texture_file_path, 'r') as file:
-            for line in file:
-                filename.append(line.strip())  # Remove newlines and spaces
-    except FileNotFoundError:
-        print(f"Warning: Texture file '{texture_file_path}' not found. No textures will be loaded.")
-        return []
-
-    # Check if texture file is empty
-    if not filename:
-        print(f"Warning: No textures listed in {texture_file_path}.")
-        return []
-
-    try:
-        # Generate texture IDs
-        textID = [glGenTextures(1) for _ in range(len(filename))]
-    except Exception as e:
-        print(f"Error generating OpenGL textures: {e}")
-        return []
-
-    # Load and bind textures
-    for i, texture_file in enumerate(filename):
         try:
-            img_path = f"images/{texture_file}"
-            img = Image.open(img_path)
-            img_data = np.array(list(img.getdata()), np.uint8)
-
-            glBindTexture(GL_TEXTURE_2D, textID[i])
-            glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP)
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP)
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-            glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_DECAL)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, img.size[0], img.size[1], 0,
-                         GL_RGB, GL_UNSIGNED_BYTE, img_data)
-
-        except FileNotFoundError:
-            print(f"Warning: Texture image file '{img_path}' not found. Skipping...")
-        except Exception as e:
-            print(f"Error loading texture '{img_path}': {e}")
-
-    return textID
-
-
+            for line in file:
+                newline = line.split('\n')
+                filename.append(newline[0])
+        except:
+            print("%s not found" %TEXTURE_FILE)
+        if len(filename)>0:
+            textID = []
+            for i in range(len(filename)):
+                textID.append(glGenTextures(1))
+            for i in range(len(filename)):
+                img = Image.open(filename[i])
+                img_data = numpy.array(list(img.getdata()), numpy.int8)
+                glBindTexture(GL_TEXTURE_2D, textID[i])
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP)
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP)
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+                glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_DECAL)
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, img.size[0], img.size[1], 0,
+                     GL_RGB, GL_UNSIGNED_BYTE, img_data)
+            return(textID)
     
     def display(self):
         """Renders the planetary system, applying transformations, lighting, and drawing orbits."""
@@ -432,7 +404,10 @@ def create_textures(self):
                     glEnd()
                 self.glut_print3(init.SCALE * body.x, init.SCALE * body.y, init.SCALE * body.z, GLUT_BITMAP_9_BY_15, body.ident, body.color1/255, body.color2/255, body.color3/255, 1.0)
                 glEnable(GL_LIGHTING)
-
+        
+        # Render text for controls
+        self.render_controls()
+        
         glutSwapBuffers()
 
     def glut_print(self, x, y, font, text, r, g, b, a):
@@ -471,8 +446,8 @@ def create_textures(self):
         """Checks if two bodies are at their closest approach and records the event."""
 
         distances = []
-        global found_close_approach
-        found_close_approach = False
+        global bool
+        bool = False
         if len(body1.coord)>2:
             for i in range(0,4):
                 if i != 0:
@@ -482,8 +457,8 @@ def create_textures(self):
                     distances.append((x_dif ** 2 + y_dif ** 2 + z_dif ** 2) ** 0.5)
             if distances[0] > distances[1] and distances[1] < distances[2]:
                 self.closeness.append(body1.ident + " and " + body2.ident + "; " + str(distances[1]))
-                found_close_approach=True
-        return found_close_approach
+                bool=True
+        return bool
 
     def animate(self):
         """Manages threading for force calculations, updates body positions, and calls rendering."""
@@ -508,13 +483,39 @@ def create_textures(self):
 
         self.display()
         self.count+=1
+        
+    def render_controls(self):
+        """Renders the list of keyboard controls on the screen."""
+        
+        controls = [
+            "Keyboard Controls:",
+            "-------------------",
+            "[X]  - Exit",
+            "[I/O] - Rotate up/down",
+            "[J/K] - Rotate left/right",
+            "[N/M] - Zoom in/out",
+            "[W/S] - Move up/down",
+            "[A/D] - Move left/right",
+            "[E/Q] - Scale simulation up/down",
+            "[1] - Toggle orbit trails",
+            "[2] - Toggle body display",
+            "[3] - Toggle short orbit mode",
+            "[=/-] - Increase/Decrease orbit length",
+            "[[]/]] - Adjust simulation speed",
+            "[R/T] - Adjust planet size",
+            "Press SPACE to pause/unpause simulation",
+        ]
+
+        glDisable(GL_LIGHTING)  # Disable lighting to make text visible
+        start_y = 300  # Adjust vertical start position
+        for i, line in enumerate(controls):
+            self.glut_print(10, start_y - (i * 15), GLUT_BITMAP_9_BY_15, line, 1.0, 1.0, 1.0, 1.0)
+        glEnable(GL_LIGHTING)  # Re-enable lighting after rendering text
 
 
 
 class Definition:
     def __init__(self):             #InitialiglEnable(GL_CULL_FACE)zation of graphics
-        """Initializes OpenGL settings, enables lighting and depth testing, and sets up input callbacks."""
-
         glClearColor(0.1,0.0,0.15,0.0)
         glPointSize(POINT_SIZE)
         glMatrixMode(GL_PROJECTION)
@@ -567,8 +568,6 @@ class Definition:
         glutReshapeFunc(self.reshape)
 
     def keyboard(self, theKey, mouseX, mouseY): #Manipulate with the image
-        """Handles keyboard inputs for controlling the camera, scaling, and toggling visualization settings."""
-
         if (theKey == b'x' or theKey == b'X'):
             sys.exit()
         if (theKey == b'i' or theKey == b'I'):
@@ -630,16 +629,12 @@ class Definition:
         else: self.upY = -1
 
     def mouse(self, button, state, mouseX, mouseY):
-        """Captures mouse button state (pressed/released) and stores the cursor position."""
-
         self.button = button
         self.state = state
         self.prevMouseX = mouseX
         self.prevMouseY = mouseY
 
     def motion(self,mouseX,mouseY):
-        """Adjusts the camera view based on mouse movement while buttons are pressed."""
-
         try:
             x_change = mouseX - self.prevMouseX
         except:
@@ -661,9 +656,7 @@ class Definition:
             self.prevMouseX = mouseX
             self.prevMouseY = mouseY
 
-    def reshape(self, width, height):
-        """Updates the OpenGL viewport and perspective when the window is resized."""
-
+    def reshape(self, width, height):             #Manipulate with the window
         self.displayRatio = 1 * width / height
         self.windowWidth = width
         self.windowHeight = height
@@ -676,7 +669,23 @@ class Definition:
 
 def random_system(n_bodies):
     """Generates a purely random planetary system with N bodies."""
-    return Asystem(n_bodies)
+    system = Asystem(0)  # Start empty
+    position = 5  # Define a reasonable spread
+    velocity = 1  # Give some initial movement
+
+    for i in range(n_bodies):
+        mass_radius = uniform(1, 2e12)
+        system.system.append(Body(i, 2452170.375,
+                                  uniform(-position, position),
+                                  uniform(-position, position),
+                                  uniform(-position, position),
+                                  uniform(-velocity, velocity),
+                                  uniform(-velocity, velocity),
+                                  uniform(-velocity, velocity),
+                                  mass_radius,
+                                  mass_radius / 1e12,
+                                  uniform(0, 255), uniform(0, 255), uniform(0, 255), 0))
+    return system
 
 def random_system_with_star(n_bodies):
     """Generates a random planetary system with a central star."""
@@ -700,29 +709,32 @@ def random_system_with_star(n_bodies):
     return system
 
 def main():
-    """Handles command-line arguments and runs the correct N-body simulation mode.
-
-    Modes:
-    - Default (Solar System): Uses predefined celestial data from 'Solar_system.csv'.
-    - Random: Generates a system with 'N' randomly placed celestial bodies.
-    - Random-Star: Generates 'N' celestial bodies, ensuring a central star is present.
-    """
-
+    """Handles command-line arguments and runs the correct simulation mode."""
     # Open file for writing simulation output
     output_filename = str(datetime.datetime.now()) + ".csv"
+    global write_file
     write_file = open(output_filename, 'w')
     write_file.write('ident,             JDTDB,                      X,                      Y,                      Z,              VX (km/s),              VY (km/s),              VZ (km/s),             mass (kg),          radius (km),  color1,   color2,    color3,\n')
     
     # Initialize OpenGL
+    
     glutInit(sys.argv)
     glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB | GLUT_DEPTH)
     glutInitWindowSize(WIDTH, HEIGHT)
-    glutInitWindowPosition(POSITION_X, POSITION_Y)
+    
+    # glutInitWindowPosition(POSITION_X, POSITION_Y)   # Reverse the commenting on this paragraph to change between manual and automatic window positioning
+    screen_width = glutGet(GLUT_SCREEN_WIDTH)
+    screen_height = glutGet(GLUT_SCREEN_HEIGHT)
+    pos_x = (screen_width - WIDTH) // 2  # Center horizontally
+    pos_y = (screen_height - HEIGHT) // 2  # Center vertically
+    glutInitWindowPosition(pos_x, pos_y)
+    
     glutCreateWindow("N-Body")
     
     glGenTextures(1)
     
     # Initialize planetary system based on selected mode
+    global planet_system
     if system_mode == "random":
         planet_system = random_system(num_bodies)  # Generate a purely random system
         print(f"Running in RANDOM mode with {num_bodies} bodies using 'configure_random.ini'.")
@@ -734,6 +746,7 @@ def main():
         print("Running in SOLAR SYSTEM mode using 'configure.ini'.")
     
     # Initialize OpenGL definitions
+    global init
     init = Definition()
     
     # Set display and animation functions

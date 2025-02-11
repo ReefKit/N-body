@@ -1,5 +1,0 @@
-1. Online interface (VCN)
-2. When using mouse, let change of mouse change acceleration, which affects velocity, which affects position. Add a 'friction deceleration' additionally.
-3. Record closest distances between certain bodies.
-4. Put close calculation with if_collision calculation to save memory usage (reuse distance calculation), and generalize close calculation for any bodies
-5. Make time a global attribute, not a body attribute
